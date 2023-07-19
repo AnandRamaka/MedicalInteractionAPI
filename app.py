@@ -1,12 +1,15 @@
-from flask import Flask
-from flask_restful import Api, Resource, reqparse
+from flask import Flask, jsonify
+from flask_restful import Api, Resource, reqparse, request
 from neo4j import GraphDatabase
+from pymongo import MongoClient
 
 app = Flask(__name__)
 api = Api(app)
 driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "testingtesting"))
 
-print(driver)
+client = MongoClient("localhost:27017")
+db = client['DrugID_NameMap']
+collection = db['drug_map']
 
 # https://www.biostars.org/p/271718/
 
@@ -35,22 +38,24 @@ class Neighbors(Resource):
 
 class ValidMedication(Resource):
     def post(self):
-        parser = reqparse.RequestParser()
-        parser.add_argument('Names', required=True)
-        args = parser.parse_args()
-        names = args['Names']
+        names = request.get_json()["Names"]
+        neighbors = set()
+        for n in names:
+            query = { "synonym": n }
+            result = collection.find_one(query)
 
-        neighbors = { getNeighbors(n) for n in names }
+            if not result:
+                return {'error' : 'Invalid input. Please provide both name and age.'}, 400
 
-        intersection = set(names) & neighbors
+            neighbors |=  set(getNeighbors(result["drug_id"]))
 
+        intersection = [*(set(names) & neighbors)]
         return {'valid': not intersection, 'intersection' : intersection}, 201
-
 
 
 api.add_resource(NodeResource, '/nodes')
 api.add_resource(Neighbors, '/neighbors')
-api.add_resource(Neighbors, '/valid')
+api.add_resource(ValidMedication, '/valid')
 
 if __name__ == '__main__':
     app.run(debug=True, port=8000)
